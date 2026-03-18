@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AI Parkour Learner</title>
+  <style>
+    body { margin:0; overflow:hidden; background:#000; }
+    #ui {
+      position:absolute;
+      top:10px; left:10px;
+      color:white;
+      font-family:Arial;
+    }
+    button { padding:8px; margin:3px; }
+  </style>
+</head>
+<body>
+
+<div id="ui">
+  <button onclick="toggleTrain()">Start/Stop</button>
+  <button onclick="saveBrain()">Save</button>
+  <button onclick="loadBrain()">Load</button>
+  <div id="info">Training...</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158/build/three.min.js"></script>
+
+<script>
+// ============================
+// THREE
+// ============================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x111111);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+camera.position.set(0,8,10);
+
+const renderer = new THREE.WebGLRenderer();
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const light = new THREE.DirectionalLight(0xffffff,1);
+light.position.set(5,10,7);
+scene.add(light);
+
+// ============================
+// WORLD
+// ============================
+const platforms = [];
+
+function makePlatform(x,z,y=0){
+  const p = new THREE.Mesh(
+    new THREE.BoxGeometry(2,0.5,2),
+    new THREE.MeshStandardMaterial({color:0x3333aa})
+  );
+  p.position.set(x,y,z);
+  scene.add(p);
+  platforms.push(p);
+}
+
+// basic parkour
+makePlatform(0,0,0);
+makePlatform(3,0,1);
+makePlatform(6,1,2);
+makePlatform(9,2,3);
+
+// goal
+const goal = new THREE.Mesh(
+  new THREE.BoxGeometry(1,1,1),
+  new THREE.MeshStandardMaterial({color:0x00ff00})
+);
+goal.position.set(9,3.5,3);
+scene.add(goal);
+
+// ============================
+// AGENT
+// ============================
+const cube = new THREE.Mesh(
+  new THREE.BoxGeometry(0.7,0.7,0.7),
+  new THREE.MeshStandardMaterial({color:0x00ffff})
+);
+scene.add(cube);
+
+let agent = {
+  x:0,y:1,z:0,
+  vx:0,vy:0,vz:0,
+  angle:0,
+  onGround:false
+};
+
+function reset(){
+  agent.x=0; agent.y=2; agent.z=0;
+  agent.vx=agent.vy=agent.vz=0;
+}
+
+// ============================
+// SIMPLE NEURAL NET
+// ============================
+function createBrain(){
+  return {
+    w1: Array.from({length:6},()=>Array.from({length:8},()=>Math.random()*2-1)),
+    w2: Array.from({length:8},()=>Array.from({length:4},()=>Math.random()*2-1))
+  };
+}
+
+let brain = createBrain();
+
+function forward(input){
+  let h = brain.w1.map(row =>
+    row.reduce((sum,w,i)=>sum+w*input[i],0)
+  ).map(x=>Math.tanh(x));
+
+  let out = brain.w2.map(row =>
+    row.reduce((sum,w,i)=>sum+w*h[i],0)
+  );
+
+  return out;
+}
+
+// ============================
+// STATE
+// ============================
+function getState(){
+  let dx = goal.position.x - agent.x;
+  let dy = goal.position.y - agent.y;
+  let dz = goal.position.z - agent.z;
+
+  return [
+    dx*0.1, dy*0.1, dz*0.1,
+    agent.vx, agent.vy, agent.vz
+  ];
+}
+
+// ============================
+// ACTIONS
+// ============================
+function act(output){
+  let action = output.indexOf(Math.max(...output));
+
+  if(action===0) agent.vx += Math.cos(agent.angle)*0.02;
+  if(action===1) agent.angle += 0.1;
+  if(action===2) agent.angle -= 0.1;
+
+  if(action===3 && agent.onGround){
+    agent.vy = 0.25; // jump
+  }
+}
+
+// ============================
+// PHYSICS
+// ============================
+function physics(){
+  agent.vy -= 0.01; // gravity
+
+  agent.x += agent.vx;
+  agent.y += agent.vy;
+  agent.z += agent.vz;
+
+  agent.vx *= 0.95;
+  agent.vz *= 0.95;
+
+  agent.onGround = false;
+
+  for(let p of platforms){
+    if(
+      Math.abs(agent.x - p.position.x) < 1 &&
+      Math.abs(agent.z - p.position.z) < 1 &&
+      agent.y <= p.position.y + 1
+    ){
+      agent.y = p.position.y + 1;
+      agent.vy = 0;
+      agent.onGround = true;
+    }
+  }
+}
+
+// ============================
+// TRAINING
+// ============================
+let training = true;
+
+function toggleTrain(){
+  training = !training;
+}
+
+function mutate(){
+  for(let l of [brain.w1, brain.w2]){
+    for(let i=0;i<l.length;i++){
+      for(let j=0;j<l[i].length;j++){
+        if(Math.random()<0.1){
+          l[i][j] += (Math.random()*2-1)*0.2;
+        }
+      }
+    }
+  }
+}
+
+function reward(){
+  let d = Math.hypot(
+    goal.position.x-agent.x,
+    goal.position.y-agent.y,
+    goal.position.z-agent.z
+  );
+
+  if(agent.y < -5) return -50; // death
+  if(d < 1) return 100; // win
+
+  return -d*0.1;
+}
+
+// ============================
+// LOOP
+// ============================
+let score = 0;
+
+function update(){
+  if(training){
+    let state = getState();
+    let out = forward(state);
+
+    act(out);
+    physics();
+
+    score += reward();
+
+    if(score < -200 || score > 100){
+      mutate();
+      reset();
+      score = 0;
+    }
+  }
+
+  cube.position.set(agent.x,agent.y,agent.z);
+  cube.rotation.y = -agent.angle;
+
+  camera.position.lerp(
+    new THREE.Vector3(agent.x+5,agent.y+5,agent.z+5),0.05
+  );
+  camera.lookAt(cube.position);
+}
+
+// ============================
+// SAVE / LOAD
+// ============================
+function saveBrain(){
+  localStorage.setItem("brain", JSON.stringify(brain));
+}
+
+function loadBrain(){
+  let data = localStorage.getItem("brain");
+  if(data) brain = JSON.parse(data);
+}
+
+// ============================
+function animate(){
+  requestAnimationFrame(animate);
+  update();
+  renderer.render(scene,camera);
+}
+animate();
+
+window.addEventListener("resize",()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+
+</body>
+</html>
