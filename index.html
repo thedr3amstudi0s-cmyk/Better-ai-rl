@@ -1,20 +1,22 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>RL Cube Learner with Thinking UI</title>
+  <title>RL Cube Learner Mobile</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <style>
-    body { margin:0; overflow:hidden; background:#000; }
+    html, body { margin:0; padding:0; overflow:hidden; touch-action:none; }
     #ui {
-      position:absolute; top:10px; left:10px; color:white; font-family:Arial;
-      background:rgba(0,0,0,0.5); padding:10px; border-radius:5px;
+      position:absolute; top:5px; left:5px; color:white; font-family:Arial;
+      background:rgba(0,0,0,0.5); padding:8px; border-radius:5px;
+      font-size:14px;
     }
-    button { padding:8px; margin:3px; }
+    button { padding:10px; margin:2px; font-size:16px; }
     pre { margin:0; }
   </style>
 </head>
 <body>
 <div id="ui">
-  <button onclick="training = !training;">Start/Stop Training</button>
+  <button onclick="training=!training">Start/Stop</button>
   <div id="info"><pre></pre></div>
 </div>
 
@@ -23,11 +25,13 @@
 // ======== THREE.JS SETUP ========
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
-const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
 camera.position.set(0,8,10);
-const renderer = new THREE.WebGLRenderer();
-renderer.setSize(innerWidth, innerHeight);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
+
 const light = new THREE.DirectionalLight(0xffffff,1);
 light.position.set(5,10,7);
 scene.add(light);
@@ -70,11 +74,12 @@ const cube = new THREE.Mesh(
   new THREE.MeshStandardMaterial({color:0x00ffff})
 );
 scene.add(cube);
+
 let agent = {x:0,y:2,z:0,vx:0,vy:0,vz:0,onGround:false};
 let training = true;
 
-// ======== Q-LIKE FUNCTION ========
-function simpleQ(state){ 
+// ======== SIMPLE Q-LIKE FUNCTION ========
+function simpleQ(state){
   return [
     state[0]*0.3 - state[3]*0.2, // forward
     state[0]*0.2 - state[5]*0.2, // left
@@ -92,13 +97,12 @@ function getState(){
 }
 
 // ======== ACTION ========
-let lastAction = "";
-let lastOutput = [];
+let lastAction="", lastOutput=[];
 function act(output){
   lastOutput = output;
   let action = output.indexOf(Math.max(...output));
   lastAction = ["forward","left","right","jump"][action];
-  if(action===0) { agent.vx += Math.cos(0)*0.05; agent.vz += Math.sin(0)*0.05; }
+  if(action===0){ agent.vx += Math.cos(0)*0.05; agent.vz += Math.sin(0)*0.05; }
   if(action===1) agent.x -= 0.05;
   if(action===2) agent.x += 0.05;
   if(action===3 && agent.onGround) agent.vy = 0.25;
@@ -106,30 +110,30 @@ function act(output){
 
 // ======== PHYSICS ========
 function physics(){
-  agent.vy -= 0.01; // gravity
+  agent.vy -= 0.01;
   agent.x += agent.vx; agent.y += agent.vy; agent.z += agent.vz;
   agent.vx *= 0.95; agent.vz *= 0.95;
   agent.onGround = false;
   for(let p of platforms){
-    if(Math.abs(agent.x - p.position.x)<1 && Math.abs(agent.z - p.position.z)<1 && agent.y <= p.position.y +1){
-      agent.y = p.position.y +1;
-      agent.vy = 0;
-      agent.onGround = true;
+    if(Math.abs(agent.x-p.position.x)<1 && Math.abs(agent.z-p.position.z)<1 && agent.y <= p.position.y+1){
+      agent.y = p.position.y+1;
+      agent.vy=0;
+      agent.onGround=true;
     }
   }
 }
 
 // ======== REWARD ========
 function reward(){
-  let d = Math.hypot(goal.position.x-agent.x, goal.position.y-agent.y, goal.position.z-agent.z);
-  if(agent.y < -5) return -50;
-  if(d < 1) return 100;
+  let d = Math.hypot(goal.position.x-agent.x,goal.position.y-agent.y,goal.position.z-agent.z);
+  if(agent.y<-5) return -50;
+  if(d<1) return 100;
   return -d*0.01;
 }
 
 // ======== RESET ========
 function reset(){
-  agent = {x:0,y:2,z:0,vx:0,vy:0,vz:0,onGround:false};
+  agent={x:0,y:2,z:0,vx:0,vy:0,vz:0,onGround:false};
 }
 
 // ======== UPDATE ========
@@ -140,9 +144,8 @@ function update(){
     act(out);
     physics();
     let r = reward();
-    if(r>50 || r<-40) reset();
+    if(r>50||r<-40) reset();
 
-    // ======== UPDATE UI ========
     document.querySelector("#info pre").textContent = `
 State: dx=${state[0].toFixed(2)}, dy=${state[1].toFixed(2)}, dz=${state[2].toFixed(2)}
 Velocity: vx=${state[3].toFixed(2)}, vy=${state[4].toFixed(2)}, vz=${state[5].toFixed(2)}
@@ -151,9 +154,8 @@ Chosen action: ${lastAction}
 Reward: ${r.toFixed(2)}
 `;
   }
-
-  cube.position.set(agent.x, agent.y, agent.z);
-  camera.position.lerp(new THREE.Vector3(agent.x+5, agent.y+5, agent.z+5),0.05);
+  cube.position.set(agent.x,agent.y,agent.z);
+  camera.position.lerp(new THREE.Vector3(agent.x+5,agent.y+5,agent.z+5),0.05);
   camera.lookAt(cube.position);
 }
 
@@ -167,9 +169,9 @@ animate();
 
 // ======== RESIZE ========
 window.addEventListener("resize", ()=>{
-  camera.aspect = innerWidth/innerHeight;
+  camera.aspect = window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth,innerHeight);
+  renderer.setSize(window.innerWidth,window.innerHeight);
 });
 </script>
 </body>
