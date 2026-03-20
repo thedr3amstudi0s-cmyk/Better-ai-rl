@@ -3,30 +3,77 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>RL AI (No CDN, Works Everywhere)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+<title>Mobile RL AI</title>
+
 <style>
-  body { margin:0; background:#000; color:white; font-family:Arial; }
-  #ui {
-    position:absolute;
-    top:10px; left:10px;
-    background:rgba(0,0,0,0.7);
-    padding:10px;
-    border-radius:8px;
+  body {
+    margin:0;
+    background:#000;
+    color:white;
+    font-family:Arial;
+    overflow:hidden;
+    touch-action:none;
   }
-  canvas { display:block; }
+
+  #ui {
+    position:fixed;
+    top:10px;
+    left:10px;
+    right:10px;
+    background:rgba(0,0,0,0.7);
+    padding:12px;
+    border-radius:10px;
+    font-size:14px;
+  }
+
+  #stats, #brain {
+    margin-top:6px;
+  }
+
+  canvas#graph {
+    width:100%;
+    height:80px;
+    margin-top:8px;
+    background:#111;
+    border-radius:6px;
+  }
+
+  #controls {
+    margin-top:8px;
+    display:flex;
+    gap:6px;
+  }
+
+  button {
+    flex:1;
+    padding:10px;
+    font-size:14px;
+    border:none;
+    border-radius:6px;
+    background:#333;
+    color:white;
+  }
+
+  button:active {
+    background:#555;
+  }
 </style>
+
 </head>
 <body>
 
 <div id="ui">
-  <b>AI Brain</b><br>
-  <div id="brain"></div><br>
-
-<b>Stats</b><br>
+  <div id="controls">
+    <button onclick="toggleTraining()">Start/Stop</button>
+    <button onclick="resetAll()">Reset</button>
+  </div>
 
   <div id="stats"></div>
+  <div id="brain"></div>
 
-<canvas id="graph" width="250" height="100"></canvas>
+<canvas id="graph"></canvas>
 
 </div>
 
@@ -34,19 +81,28 @@
 
 <script>
 // ============================
-// CANVAS SETUP
+// MOBILE DETECTION
+// ============================
+const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+
+// ============================
+// CANVAS
 // ============================
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+function resize(){
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize", resize);
 
 // ============================
 // WORLD
 // ============================
-const SIZE = 400;
-const AGENT_COUNT = 25;
+const SIZE = Math.min(window.innerWidth, window.innerHeight);
+const AGENT_COUNT = isMobile ? 12 : 25;
 
 let goal = {
   x: Math.random()*SIZE,
@@ -63,7 +119,7 @@ function createAgent(){
     x: SIZE/2,
     y: SIZE/2,
     angle: Math.random()*Math.PI*2,
-    speed: 2
+    speed: isMobile ? 1.6 : 2
   };
 }
 
@@ -78,22 +134,32 @@ let Q = {};
 const actions = ["forward","left","right"];
 
 let alpha=0.12, gamma=0.9, epsilon=0.3;
+let training = true;
+
+function toggleTraining(){
+  training = !training;
+}
+
+function resetAll(){
+  agents.forEach(a=>{
+    a.x = SIZE/2;
+    a.y = SIZE/2;
+  });
+  goal.x = Math.random()*SIZE;
+  goal.y = Math.random()*SIZE;
+}
 
 function getState(a){
   let dx = goal.x - a.x;
   let dy = goal.y - a.y;
 
   let dist = Math.hypot(dx,dy);
-  let angleToGoal = Math.atan2(dy,dx);
-  let diff = angleToGoal - a.angle;
+  let diff = Math.atan2(dy,dx) - a.angle;
 
   let lookX = a.x + Math.cos(a.angle)*20;
   let lookY = a.y + Math.sin(a.angle)*20;
 
-  let danger = (
-    lookX < 0 || lookX > SIZE ||
-    lookY < 0 || lookY > SIZE
-  ) ? 1 : 0;
+  let danger = (lookX<0||lookX>SIZE||lookY<0||lookY>SIZE)?1:0;
 
   return `${Math.round(dist/20)}_${Math.round(diff*4)}_${danger}`;
 }
@@ -119,19 +185,15 @@ function step(a,action){
 
   let reward = (prevDist - newDist)*2;
 
-  let angleToGoal = Math.atan2(goal.y-a.y, goal.x-a.x);
-  let diff = Math.abs(angleToGoal - a.angle);
+  let diff = Math.abs(Math.atan2(goal.y-a.y, goal.x-a.x) - a.angle);
   reward += (Math.PI - diff);
 
-  // edges
   if(a.x<10||a.x>SIZE-10||a.y<10||a.y>SIZE-10) reward -= 2;
 
-  // death
   if(a.x<0||a.x>SIZE||a.y<0||a.y>SIZE){
     return {reward:-30, done:true};
   }
 
-  // goal
   if(newDist < 10){
     return {reward:40, done:true};
   }
@@ -144,15 +206,25 @@ function step(a,action){
 // ============================
 const graph = document.getElementById("graph");
 const gctx = graph.getContext("2d");
+
+function resizeGraph(){
+  graph.width = graph.clientWidth;
+  graph.height = graph.clientHeight;
+}
+resizeGraph();
+window.addEventListener("resize", resizeGraph);
+
 let rewards = [];
 
 function drawGraph(){
-  gctx.clearRect(0,0,250,100);
+  gctx.clearRect(0,0,graph.width,graph.height);
+
   gctx.beginPath();
   for(let i=0;i<rewards.length;i++){
-    let y = 100 - rewards[i];
-    if(i===0) gctx.moveTo(i,y);
-    else gctx.lineTo(i,y);
+    let x = i;
+    let y = graph.height - rewards[i];
+    if(i===0) gctx.moveTo(x,y);
+    else gctx.lineTo(x,y);
   }
   gctx.strokeStyle="lime";
   gctx.stroke();
@@ -165,6 +237,8 @@ let episodes = 0;
 let lastDebug = {};
 
 function update(){
+  if(!training) return;
+
   agents.forEach(a=>{
     let s = getState(a);
     let act = chooseAction(s);
@@ -182,7 +256,7 @@ function update(){
     lastDebug = {state:s, action:act, q:Q[s]};
 
     rewards.push(res.reward);
-    if(rewards.length>250) rewards.shift();
+    if(rewards.length>graph.width) rewards.shift();
 
     if(res.done){
       episodes++;
@@ -195,27 +269,21 @@ function update(){
   if(epsilon<0.05) epsilon=0.05;
 }
 
-// ============================
-// DRAW
-// ============================
 function draw(){
   ctx.fillStyle="#111";
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
   // goal
   ctx.fillStyle="lime";
-  ctx.fillRect(goal.x,goal.y,10,10);
+  ctx.fillRect(goal.x,goal.y,12,12);
 
   // agents
   ctx.fillStyle="cyan";
   agents.forEach(a=>{
-    ctx.fillRect(a.x,a.y,5,5);
+    ctx.fillRect(a.x,a.y,6,6);
   });
 }
 
-// ============================
-// MAIN LOOP
-// ============================
 function loop(){
   update();
   draw();
@@ -225,9 +293,7 @@ function loop(){
     `Agents: ${AGENT_COUNT}<br>Episodes: ${episodes}<br>Epsilon: ${epsilon.toFixed(2)}`;
 
   document.getElementById("brain").innerHTML =
-    `State: ${lastDebug.state || ""}<br>
-     Action: ${lastDebug.action || ""}<br>
-     Q: ${JSON.stringify(lastDebug.q || {}, null, 1)}`;
+    `Action: ${lastDebug.action || ""}`;
 
   requestAnimationFrame(loop);
 }
