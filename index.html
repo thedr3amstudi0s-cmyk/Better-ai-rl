@@ -1,88 +1,69 @@
 <!DOCTYPE html>
 
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Multi-Agent RL Cube AI</title>
+<title>RL AI (No CDN, Works Everywhere)</title>
 <style>
-  body { margin:0; overflow:hidden; background:#000; font-family:Arial; }
+  body { margin:0; background:#000; color:white; font-family:Arial; }
   #ui {
     position:absolute;
     top:10px; left:10px;
-    color:white;
-    background:rgba(0,0,0,0.6);
-    padding:12px;
-    border-radius:10px;
+    background:rgba(0,0,0,0.7);
+    padding:10px;
+    border-radius:8px;
   }
-  button { padding:8px 12px; margin:4px; cursor:pointer; }
+  canvas { display:block; }
 </style>
 </head>
 <body>
 
 <div id="ui">
-  <button onclick="toggleTraining()">Start / Stop</button>
-  <button onclick="resetAll()">Reset</button>
-  <div id="stats">Loading...</div>
+  <b>AI Brain</b><br>
+  <div id="brain"></div><br>
+
+<b>Stats</b><br>
+
+  <div id="stats"></div>
+
+<canvas id="graph" width="250" height="100"></canvas>
+
 </div>
 
-<script type="module">
-import * as THREE from "https://cdn.skypack.dev/three@0.158.0";
+<canvas id="game"></canvas>
+
+<script>
+// ============================
+// CANVAS SETUP
+// ============================
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
 // ============================
-// BASIC SCENE
+// WORLD
 // ============================
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111);
-
-const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
-camera.position.set(10,12,14);
-
-const renderer = new THREE.WebGLRenderer({antialias:true});
-renderer.setSize(innerWidth, innerHeight);
-document.body.appendChild(renderer.domElement);
-
-const light = new THREE.DirectionalLight(0xffffff,1);
-light.position.set(5,10,7);
-scene.add(light);
-
-// ============================
-// PLATFORM
-// ============================
-const platform = new THREE.Mesh(
-  new THREE.BoxGeometry(20,0.5,20),
-  new THREE.MeshStandardMaterial({color:0x222222})
-);
-platform.position.y = -0.25;
-scene.add(platform);
-
-// ============================
-// GOAL
-// ============================
-const goal = new THREE.Mesh(
-  new THREE.BoxGeometry(1,0.2,1),
-  new THREE.MeshStandardMaterial({color:0x00ff00})
-);
-scene.add(goal);
-
-// ============================
-// MULTIPLE AGENTS
-// ============================
+const SIZE = 400;
 const AGENT_COUNT = 25;
+
+let goal = {
+  x: Math.random()*SIZE,
+  y: Math.random()*SIZE
+};
+
+// ============================
+// AGENTS
+// ============================
 const agents = [];
 
 function createAgent(){
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.5,0.5,0.5),
-    new THREE.MeshStandardMaterial({color:0x00ffff})
-  );
-  scene.add(mesh);
-
   return {
-    mesh,
-    x:0,
-    z:0,
-    angle:Math.random()*Math.PI*2,
-    speed:0.08
+    x: SIZE/2,
+    y: SIZE/2,
+    angle: Math.random()*Math.PI*2,
+    speed: 2
   };
 }
 
@@ -91,169 +72,166 @@ for(let i=0;i<AGENT_COUNT;i++){
 }
 
 // ============================
-// RESET
-// ============================
-function resetAgent(a){
-  a.x = 0;
-  a.z = 0;
-  a.angle = Math.random()*Math.PI*2;
-}
-
-function resetAll(){
-  agents.forEach(resetAgent);
-
-  goal.position.set(
-    (Math.random()*16)-8,
-    0.1,
-    (Math.random()*16)-8
-  );
-}
-
-resetAll();
-
-// ============================
-// RL SHARED BRAIN
+// RL
 // ============================
 let Q = {};
 const actions = ["forward","left","right"];
 
-let alpha = 0.1;
-let gamma = 0.9;
-let epsilon = 0.3;
+let alpha=0.12, gamma=0.9, epsilon=0.3;
 
 function getState(a){
-  let dx = goal.position.x - a.x;
-  let dz = goal.position.z - a.z;
+  let dx = goal.x - a.x;
+  let dy = goal.y - a.y;
 
-  let dist = Math.sqrt(dx*dx + dz*dz);
-  let angleToGoal = Math.atan2(dz,dx);
+  let dist = Math.hypot(dx,dy);
+  let angleToGoal = Math.atan2(dy,dx);
   let diff = angleToGoal - a.angle;
 
-  // LOOK AHEAD (edge awareness)
-  let lookX = a.x + Math.cos(a.angle)*1.5;
-  let lookZ = a.z + Math.sin(a.angle)*1.5;
+  let lookX = a.x + Math.cos(a.angle)*20;
+  let lookY = a.y + Math.sin(a.angle)*20;
 
   let danger = (
-    Math.abs(lookX)>9 ||
-    Math.abs(lookZ)>9
+    lookX < 0 || lookX > SIZE ||
+    lookY < 0 || lookY > SIZE
   ) ? 1 : 0;
 
-  return `${Math.round(dist)}_${Math.round(diff*5)}_${danger}`;
+  return `${Math.round(dist/20)}_${Math.round(diff*4)}_${danger}`;
 }
 
 function chooseAction(state){
-  if(Math.random()<epsilon){
-    return actions[Math.floor(Math.random()*3)];
-  }
+  if(Math.random()<epsilon) return actions[Math.floor(Math.random()*3)];
   let qs = Q[state]||{};
   return actions.reduce((a,b)=>(qs[a]||0)>(qs[b]||0)?a:b);
 }
 
-function step(a, action){
-  let prevDist = distance(a);
+function step(a,action){
+  let prevDist = Math.hypot(goal.x-a.x, goal.y-a.y);
 
-  if(action==="left") a.angle -= 0.25;
-  if(action==="right") a.angle += 0.25;
+  if(action==="left") a.angle -= 0.2;
+  if(action==="right") a.angle += 0.2;
 
   if(action==="forward"){
     a.x += Math.cos(a.angle)*a.speed;
-    a.z += Math.sin(a.angle)*a.speed;
+    a.y += Math.sin(a.angle)*a.speed;
   }
 
-  let newDist = distance(a);
-  let reward = (prevDist - newDist)*5;
+  let newDist = Math.hypot(goal.x-a.x, goal.y-a.y);
 
-  // edge penalty
-  if(Math.abs(a.x)>8.5 || Math.abs(a.z)>8.5){
-    reward -= 2;
-  }
+  let reward = (prevDist - newDist)*2;
+
+  let angleToGoal = Math.atan2(goal.y-a.y, goal.x-a.x);
+  let diff = Math.abs(angleToGoal - a.angle);
+  reward += (Math.PI - diff);
+
+  // edges
+  if(a.x<10||a.x>SIZE-10||a.y<10||a.y>SIZE-10) reward -= 2;
 
   // death
-  if(Math.abs(a.x)>10 || Math.abs(a.z)>10){
-    return {reward:-50, done:true};
+  if(a.x<0||a.x>SIZE||a.y<0||a.y>SIZE){
+    return {reward:-30, done:true};
   }
 
   // goal
-  if(newDist < 0.6){
-    return {reward:50, done:true};
+  if(newDist < 10){
+    return {reward:40, done:true};
   }
 
   return {reward, done:false};
 }
 
-function distance(a){
-  let dx = goal.position.x - a.x;
-  let dz = goal.position.z - a.z;
-  return Math.sqrt(dx*dx + dz*dz);
+// ============================
+// GRAPH
+// ============================
+const graph = document.getElementById("graph");
+const gctx = graph.getContext("2d");
+let rewards = [];
+
+function drawGraph(){
+  gctx.clearRect(0,0,250,100);
+  gctx.beginPath();
+  for(let i=0;i<rewards.length;i++){
+    let y = 100 - rewards[i];
+    if(i===0) gctx.moveTo(i,y);
+    else gctx.lineTo(i,y);
+  }
+  gctx.strokeStyle="lime";
+  gctx.stroke();
 }
 
 // ============================
-// TRAIN LOOP
+// LOOP
 // ============================
-let training = true;
 let episodes = 0;
+let lastDebug = {};
 
-function toggleTraining(){
-  training = !training;
-}
-
-function updateRL(){
-  if(!training) return;
-
+function update(){
   agents.forEach(a=>{
     let s = getState(a);
-    let action = chooseAction(s);
+    let act = chooseAction(s);
 
-    let result = step(a, action);
+    let res = step(a,act);
     let s2 = getState(a);
 
-    if(!Q[s]) Q[s] = {};
+    if(!Q[s]) Q[s]={};
 
-    let old = Q[s][action] || 0;
-    let nextMax = Q[s2] ? Math.max(...actions.map(x=>Q[s2][x]||0)) : 0;
+    let old = Q[s][act]||0;
+    let nextMax = Q[s2]?Math.max(...actions.map(x=>Q[s2][x]||0)):0;
 
-    Q[s][action] = old + alpha*(result.reward + gamma*nextMax - old);
+    Q[s][act] = old + alpha*(res.reward + gamma*nextMax - old);
 
-    if(result.done){
+    lastDebug = {state:s, action:act, q:Q[s]};
+
+    rewards.push(res.reward);
+    if(rewards.length>250) rewards.shift();
+
+    if(res.done){
       episodes++;
-      resetAgent(a);
+      a.x = SIZE/2;
+      a.y = SIZE/2;
     }
   });
 
-  // decay randomness
-  epsilon *= 0.9995;
-  if(epsilon < 0.05) epsilon = 0.05;
+  epsilon*=0.999;
+  if(epsilon<0.05) epsilon=0.05;
 }
 
 // ============================
-// RENDER LOOP
+// DRAW
 // ============================
-function animate(){
-  requestAnimationFrame(animate);
+function draw(){
+  ctx.fillStyle="#111";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  updateRL();
+  // goal
+  ctx.fillStyle="lime";
+  ctx.fillRect(goal.x,goal.y,10,10);
 
+  // agents
+  ctx.fillStyle="cyan";
   agents.forEach(a=>{
-    a.mesh.position.set(a.x,0.3,a.z);
-    a.mesh.rotation.y = -a.angle;
+    ctx.fillRect(a.x,a.y,5,5);
   });
+}
 
-  camera.lookAt(0,0,0);
+// ============================
+// MAIN LOOP
+// ============================
+function loop(){
+  update();
+  draw();
+  drawGraph();
 
   document.getElementById("stats").innerHTML =
-    "Agents: " + AGENT_COUNT + "<br>" +
-    "Episodes: " + episodes + "<br>" +
-    "Epsilon: " + epsilon.toFixed(2);
+    `Agents: ${AGENT_COUNT}<br>Episodes: ${episodes}<br>Epsilon: ${epsilon.toFixed(2)}`;
 
-  renderer.render(scene,camera);
+  document.getElementById("brain").innerHTML =
+    `State: ${lastDebug.state || ""}<br>
+     Action: ${lastDebug.action || ""}<br>
+     Q: ${JSON.stringify(lastDebug.q || {}, null, 1)}`;
+
+  requestAnimationFrame(loop);
 }
-animate();
-
-window.addEventListener("resize",()=>{
-  camera.aspect = innerWidth/innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth,innerHeight);
-});
+loop();
 </script>
 
 </body>
