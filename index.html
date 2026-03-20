@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>3D RL AI (Stable)</title>
+<title>Neural RL AI (Mobile)</title>
 
 <style>
 body { margin:0; background:#000; color:white; font-family:Arial; overflow:hidden; }
@@ -19,7 +19,14 @@ body { margin:0; background:#000; color:white; font-family:Arial; overflow:hidde
   border-radius:10px;
 }
 
-#stats { margin-top:6px; }
+button {
+  padding:10px;
+  margin-right:5px;
+  border:none;
+  border-radius:6px;
+  background:#333;
+  color:white;
+}
 
 #bars {
   display:flex;
@@ -44,11 +51,6 @@ canvas#graph {
   height:80px;
   margin-top:6px;
   background:#111;
-}
-
-button {
-  padding:8px;
-  margin-right:5px;
 }
 </style>
 
@@ -76,8 +78,10 @@ button {
 
 <script>
 // ============================
-// SETUP
+// MOBILE SETUP
 // ============================
+const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
@@ -89,14 +93,12 @@ resize();
 window.addEventListener("resize", resize);
 
 // ============================
-// WORLD (3D simulated)
+// WORLD
 // ============================
-const SIZE = 400;
-const DEPTH = 200; // fake height
+const SIZE = Math.min(window.innerWidth, window.innerHeight);
+const AGENTS = isMobile ? 12 : 25;
 
-const AGENT_COUNT = 20;
-
-let goal = { x:200, y:200 };
+let goal = { x: SIZE/2, y: SIZE/2 };
 
 // ============================
 // AGENTS
@@ -105,136 +107,163 @@ const agents = [];
 
 function createAgent(){
   return {
-    x:200,
-    y:200,
-    z:0,
-    vy:0,
-    angle:Math.random()*Math.PI*2,
-    speed:2
+    x: SIZE/2,
+    y: SIZE/2,
+    angle: Math.random()*Math.PI*2,
+    speed: isMobile ? 1.5 : 2,
+    z:0, vy:0
   };
 }
-
-for(let i=0;i<AGENT_COUNT;i++) agents.push(createAgent());
+for(let i=0;i<AGENTS;i++) agents.push(createAgent());
 
 // ============================
-// RL
+// SIMPLE NEURAL NETWORK
 // ============================
-let Q = {};
-const actions = ["forward","left","right"];
+const INPUTS = 4;
+const HIDDEN = 8;
+const OUTPUTS = 3;
 
-let alpha=0.12, gamma=0.9, epsilon=0.3;
-let training = true;
+// weights
+let W1 = Array(INPUTS).fill().map(()=>Array(HIDDEN).fill().map(()=>Math.random()*2-1));
+let W2 = Array(HIDDEN).fill().map(()=>Array(OUTPUTS).fill().map(()=>Math.random()*2-1));
 
-function toggleTraining(){ training=!training; }
-
-function resetAgent(a){
-  a.x=200; a.y=200; a.z=0; a.vy=0;
+function relu(x){ return Math.max(0,x); }
+function softmax(arr){
+  let max = Math.max(...arr);
+  let exps = arr.map(v=>Math.exp(v-max));
+  let sum = exps.reduce((a,b)=>a+b,0);
+  return exps.map(v=>v/sum);
 }
 
-function resetAll(){
-  agents.forEach(resetAgent);
-  goal.x=Math.random()*SIZE;
-  goal.y=Math.random()*SIZE;
+function forward(input){
+  let hidden = [];
+
+  for(let j=0;j<HIDDEN;j++){
+    let sum = 0;
+    for(let i=0;i<INPUTS;i++) sum += input[i]*W1[i][j];
+    hidden[j] = relu(sum);
+  }
+
+  let output = [];
+  for(let k=0;k<OUTPUTS;k++){
+    let sum = 0;
+    for(let j=0;j<HIDDEN;j++) sum += hidden[j]*W2[j][k];
+    output[k] = sum;
+  }
+
+  return softmax(output);
 }
 
 // ============================
 // STATE
 // ============================
-function getState(a){
-  let dx=goal.x-a.x;
-  let dy=goal.y-a.y;
-  let dist=Math.hypot(dx,dy);
-  let diff=Math.atan2(dy,dx)-a.angle;
+function getInput(a){
+  let dx = (goal.x - a.x)/SIZE;
+  let dy = (goal.y - a.y)/SIZE;
 
-  let lookX=a.x+Math.cos(a.angle)*20;
-  let lookY=a.y+Math.sin(a.angle)*20;
+  let dist = Math.hypot(dx,dy);
+  let angle = Math.atan2(dy,dx) - a.angle;
 
-  let danger=(lookX<0||lookX>SIZE||lookY<0||lookY>SIZE)?1:0;
+  let danger = (
+    a.x<20||a.x>SIZE-20||
+    a.y<20||a.y>SIZE-20
+  ) ? 1 : 0;
 
-  return `${Math.round(dist/20)}_${Math.round(diff*4)}_${danger}`;
+  return [dx, dy, angle/Math.PI, danger];
 }
 
-function chooseAction(state){
-  if(Math.random()<epsilon) return actions[Math.floor(Math.random()*3)];
-  let qs=Q[state]||{};
-  return actions.reduce((a,b)=>(qs[a]||0)>(qs[b]||0)?a:b);
+// ============================
+// ACTION
+// ============================
+function choose(probs){
+  let r = Math.random();
+  let sum = 0;
+  for(let i=0;i<probs.length;i++){
+    sum += probs[i];
+    if(r<sum) return i;
+  }
+  return 0;
 }
 
 // ============================
 // STEP
 // ============================
 function step(a,action){
-  let prevDist=Math.hypot(goal.x-a.x,goal.y-a.y);
+  let prevDist = Math.hypot(goal.x-a.x,goal.y-a.y);
 
-  if(action==="left") a.angle-=0.2;
-  if(action==="right") a.angle+=0.2;
+  if(action===1) a.angle -= 0.2;
+  if(action===2) a.angle += 0.2;
 
-  if(action==="forward"){
-    a.x+=Math.cos(a.angle)*a.speed;
-    a.y+=Math.sin(a.angle)*a.speed;
+  if(action===0){
+    a.x += Math.cos(a.angle)*a.speed;
+    a.y += Math.sin(a.angle)*a.speed;
   }
 
-  let newDist=Math.hypot(goal.x-a.x,goal.y-a.y);
+  let newDist = Math.hypot(goal.x-a.x,goal.y-a.y);
 
-  let reward=(prevDist-newDist)*3;
+  let reward = (prevDist - newDist)*4;
 
-  let diff=Math.abs(Math.atan2(goal.y-a.y,goal.x-a.x)-a.angle);
-  reward+=(Math.PI-diff);
-
-  // edge warning
-  if(a.x<10||a.x>SIZE-10||a.y<10||a.y>SIZE-10) reward-=3;
-
-  // FALL OFF EDGE → 3D fall
   if(a.x<0||a.x>SIZE||a.y<0||a.y>SIZE){
-    a.vy += 0.5;
-    a.z += a.vy;
-
-    if(a.z > DEPTH){
-      return {reward:-50, done:true};
-    }
+    a.vy+=0.5;
+    a.z+=a.vy;
+    if(a.z>100) return {reward:-30, done:true};
     return {reward:-5, done:false};
   }
 
-  if(newDist<10){
-    return {reward:50, done:true};
-  }
+  if(newDist < 10) return {reward:50, done:true};
 
   return {reward, done:false};
 }
 
 // ============================
+// TRAIN
+// ============================
+let lr = 0.01;
+let epsilon = 0.2;
+let training = true;
+
+function toggleTraining(){ training=!training; }
+
+function resetAll(){
+  agents.forEach(a=>{
+    a.x=SIZE/2;
+    a.y=SIZE/2;
+    a.z=0;
+    a.vy=0;
+  });
+}
+
+function train(input, action, reward){
+  let probs = forward(input);
+
+  for(let i=0;i<HIDDEN;i++){
+    for(let j=0;j<OUTPUTS;j++){
+      W2[i][j] += lr * reward * ( (j===action?1:0) - probs[j] );
+    }
+  }
+}
+
+// ============================
 // GRAPH
 // ============================
-const graph=document.getElementById("graph");
-const gctx=graph.getContext("2d");
+const graph = document.getElementById("graph");
+const gctx = graph.getContext("2d");
 
 function resizeGraph(){
-  graph.width=graph.clientWidth;
-  graph.height=graph.clientHeight;
+  graph.width = graph.clientWidth;
+  graph.height = graph.clientHeight;
 }
 resizeGraph();
-window.addEventListener("resize",resizeGraph);
+window.addEventListener("resize", resizeGraph);
 
-let rewards=[];
-let avgRewards=[];
+let history=[];
 
 function drawGraph(){
   gctx.clearRect(0,0,graph.width,graph.height);
 
-  // instant reward (spiky)
   gctx.beginPath();
-  for(let i=0;i<rewards.length;i++){
-    let y=graph.height-rewards[i];
-    if(i===0) gctx.moveTo(i,y);
-    else gctx.lineTo(i,y);
-  }
-  gctx.strokeStyle="lime";
-  gctx.stroke();
-
-  // avg reward (smooth)
-  gctx.beginPath();
-  for(let i=0;i<avgRewards.length;i++){
-    let y=graph.height-avgRewards[i];
+  for(let i=0;i<history.length;i++){
+    let y = graph.height - history[i];
     if(i===0) gctx.moveTo(i,y);
     else gctx.lineTo(i,y);
   }
@@ -246,46 +275,33 @@ function drawGraph(){
 // LOOP
 // ============================
 let episodes=0;
-let lastQ={};
+let lastProbs=[0,0,0];
 
 function update(){
   if(!training) return;
 
-  let totalReward=0;
+  let total=0;
 
   agents.forEach(a=>{
-    let s=getState(a);
-    let act=chooseAction(s);
+    let input = getInput(a);
+    let probs = forward(input);
+    let action = choose(probs);
 
-    let res=step(a,act);
-    let s2=getState(a);
+    let res = step(a,action);
 
-    if(!Q[s]) Q[s]={};
+    train(input,action,res.reward);
 
-    let old=Q[s][act]||0;
-    let nextMax=Q[s2]?Math.max(...actions.map(x=>Q[s2][x]||0)):0;
-
-    Q[s][act]=old+alpha*(res.reward+gamma*nextMax-old);
-
-    lastQ=Q[s];
-
-    totalReward+=res.reward;
+    total += res.reward;
+    lastProbs = probs;
 
     if(res.done){
       episodes++;
-      resetAgent(a);
+      a.x=SIZE/2; a.y=SIZE/2; a.z=0; a.vy=0;
     }
   });
 
-  let avg=totalReward/AGENT_COUNT;
-
-  rewards.push(avg);
-  if(rewards.length>graph.width) rewards.shift();
-
-  avgRewards.push(
-    avgRewards.length>0 ? avgRewards[avgRewards.length-1]*0.9 + avg*0.1 : avg
-  );
-  if(avgRewards.length>graph.width) avgRewards.shift();
+  history.push(total/AGENTS);
+  if(history.length>graph.width) history.shift();
 
   epsilon*=0.999;
 }
@@ -297,17 +313,14 @@ function draw(){
   ctx.fillStyle="#111";
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  // platform
   ctx.strokeStyle="#444";
   ctx.strokeRect(0,0,SIZE,SIZE);
 
-  // goal
   ctx.fillStyle="lime";
-  ctx.fillRect(goal.x,goal.y,10,10);
+  ctx.fillRect(goal.x,goal.y,12,12);
 
-  // agents
   agents.forEach(a=>{
-    ctx.fillStyle = a.z>0 ? "red" : "cyan";
+    ctx.fillStyle = a.z>0 ? "red":"cyan";
     ctx.fillRect(a.x,a.y,6,6);
   });
 }
@@ -317,13 +330,10 @@ function draw(){
 // ============================
 function updateUI(){
   document.getElementById("stats").innerHTML =
-    `Agents: ${AGENT_COUNT} | Episodes: ${episodes}`;
+    `Agents: ${AGENTS} | Episodes: ${episodes}`;
 
-  let vals = ["forward","left","right"].map(a=>lastQ[a]||0);
-  let max = Math.max(...vals,1);
-
-  vals.forEach((v,i)=>{
-    document.getElementById("b"+i).style.height = (v/max*40)+"px";
+  lastProbs.forEach((p,i)=>{
+    document.getElementById("b"+i).style.height = (p*40)+"px";
   });
 }
 
