@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -17,6 +18,7 @@
 </style>
 </head>
 <body>
+
 <div id="ui">
   <button onclick="toggleTraining()">Start / Stop</button>
   <button onclick="resetAll()">Reset</button>
@@ -24,16 +26,10 @@
 </div>
 
 <script type="module">
-// ============================
-// THREE.JS MODULE (r158) EMBEDDED
-// ============================
-// For brevity, we include a minimal Three.js setup here
-// Full three.module.js can be pasted directly, but we'll use basic THREE for demo
-
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js';
+import * as THREE from "https://cdn.skypack.dev/three@0.158.0";
 
 // ============================
-// SCENE SETUP
+// BASIC SCENE
 // ============================
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
@@ -49,114 +45,216 @@ const light = new THREE.DirectionalLight(0xffffff,1);
 light.position.set(5,10,7);
 scene.add(light);
 
+// ============================
 // PLATFORM
+// ============================
 const platform = new THREE.Mesh(
   new THREE.BoxGeometry(20,0.5,20),
   new THREE.MeshStandardMaterial({color:0x222222})
 );
-platform.position.y=-0.25;
+platform.position.y = -0.25;
 scene.add(platform);
 
+// ============================
 // GOAL
+// ============================
 const goal = new THREE.Mesh(
   new THREE.BoxGeometry(1,0.2,1),
   new THREE.MeshStandardMaterial({color:0x00ff00})
 );
 scene.add(goal);
 
-// MULTI-AGENTS
+// ============================
+// MULTIPLE AGENTS
+// ============================
 const AGENT_COUNT = 25;
 const agents = [];
+
 function createAgent(){
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(0.5,0.5,0.5),
     new THREE.MeshStandardMaterial({color:0x00ffff})
   );
   scene.add(mesh);
-  return {mesh, x:0, z:0, angle:Math.random()*Math.PI*2, speed:0.08};
-}
-for(let i=0;i<AGENT_COUNT;i++) agents.push(createAgent());
 
-// RESET
-function resetAgent(a){
-  a.x = 0; a.z = 0; a.angle = Math.random()*Math.PI*2;
+  return {
+    mesh,
+    x:0,
+    z:0,
+    angle:Math.random()*Math.PI*2,
+    speed:0.08
+  };
 }
+
+for(let i=0;i<AGENT_COUNT;i++){
+  agents.push(createAgent());
+}
+
+// ============================
+// RESET
+// ============================
+function resetAgent(a){
+  a.x = 0;
+  a.z = 0;
+  a.angle = Math.random()*Math.PI*2;
+}
+
 function resetAll(){
   agents.forEach(resetAgent);
-  goal.position.set((Math.random()*16)-8,0.1,(Math.random()*16)-8);
+
+  goal.position.set(
+    (Math.random()*16)-8,
+    0.1,
+    (Math.random()*16)-8
+  );
 }
+
 resetAll();
 
+// ============================
 // RL SHARED BRAIN
-let Q={};
+// ============================
+let Q = {};
 const actions = ["forward","left","right"];
-let alpha=0.1, gamma=0.9, epsilon=0.3;
+
+let alpha = 0.1;
+let gamma = 0.9;
+let epsilon = 0.3;
 
 function getState(a){
   let dx = goal.position.x - a.x;
   let dz = goal.position.z - a.z;
+
   let dist = Math.sqrt(dx*dx + dz*dz);
-  let diff = Math.atan2(dz,dx) - a.angle;
+  let angleToGoal = Math.atan2(dz,dx);
+  let diff = angleToGoal - a.angle;
+
+  // LOOK AHEAD (edge awareness)
   let lookX = a.x + Math.cos(a.angle)*1.5;
   let lookZ = a.z + Math.sin(a.angle)*1.5;
-  let danger = (Math.abs(lookX)>9 || Math.abs(lookZ)>9)?1:0;
+
+  let danger = (
+    Math.abs(lookX)>9 ||
+    Math.abs(lookZ)>9
+  ) ? 1 : 0;
+
   return `${Math.round(dist)}_${Math.round(diff*5)}_${danger}`;
 }
+
 function chooseAction(state){
-  if(Math.random()<epsilon) return actions[Math.floor(Math.random()*3)];
+  if(Math.random()<epsilon){
+    return actions[Math.floor(Math.random()*3)];
+  }
   let qs = Q[state]||{};
   return actions.reduce((a,b)=>(qs[a]||0)>(qs[b]||0)?a:b);
 }
-function step(a,action){
-  let prevDist = Math.sqrt((goal.position.x-a.x)**2 + (goal.position.z-a.z)**2);
-  if(action==="left") a.angle-=0.25;
-  if(action==="right") a.angle+=0.25;
-  if(action==="forward"){a.x+=Math.cos(a.angle)*a.speed; a.z+=Math.sin(a.angle)*a.speed;}
-  let newDist = Math.sqrt((goal.position.x-a.x)**2 + (goal.position.z-a.z)**2);
-  let reward = (prevDist-newDist)*5;
-  if(Math.abs(a.x)>8.5 || Math.abs(a.z)>8.5) reward -= 2;
-  if(Math.abs(a.x)>10 || Math.abs(a.z)>10) return {reward:-50, done:true};
-  if(newDist<0.6) return {reward:50, done:true};
+
+function step(a, action){
+  let prevDist = distance(a);
+
+  if(action==="left") a.angle -= 0.25;
+  if(action==="right") a.angle += 0.25;
+
+  if(action==="forward"){
+    a.x += Math.cos(a.angle)*a.speed;
+    a.z += Math.sin(a.angle)*a.speed;
+  }
+
+  let newDist = distance(a);
+  let reward = (prevDist - newDist)*5;
+
+  // edge penalty
+  if(Math.abs(a.x)>8.5 || Math.abs(a.z)>8.5){
+    reward -= 2;
+  }
+
+  // death
+  if(Math.abs(a.x)>10 || Math.abs(a.z)>10){
+    return {reward:-50, done:true};
+  }
+
+  // goal
+  if(newDist < 0.6){
+    return {reward:50, done:true};
+  }
+
   return {reward, done:false};
 }
 
-// TRAIN LOOP
-let training=true, episodes=0;
-function toggleTraining(){training=!training;}
-function updateRL(){
-  if(!training) return;
-  agents.forEach(a=>{
-    let s=getState(a);
-    let act=chooseAction(s);
-    let res=step(a,act);
-    let s2=getState(a);
-    if(!Q[s]) Q[s]={};
-    let old=Q[s][act]||0;
-    let nextMax = Q[s2]? Math.max(...actions.map(x=>Q[s2][x]||0)):0;
-    Q[s][act]=old + alpha*(res.reward + gamma*nextMax - old);
-    if(res.done){episodes++; resetAgent(a);}
-  });
-  epsilon*=0.9995;
-  if(epsilon<0.05) epsilon=0.05;
+function distance(a){
+  let dx = goal.position.x - a.x;
+  let dz = goal.position.z - a.z;
+  return Math.sqrt(dx*dx + dz*dz);
 }
 
+// ============================
+// TRAIN LOOP
+// ============================
+let training = true;
+let episodes = 0;
+
+function toggleTraining(){
+  training = !training;
+}
+
+function updateRL(){
+  if(!training) return;
+
+  agents.forEach(a=>{
+    let s = getState(a);
+    let action = chooseAction(s);
+
+    let result = step(a, action);
+    let s2 = getState(a);
+
+    if(!Q[s]) Q[s] = {};
+
+    let old = Q[s][action] || 0;
+    let nextMax = Q[s2] ? Math.max(...actions.map(x=>Q[s2][x]||0)) : 0;
+
+    Q[s][action] = old + alpha*(result.reward + gamma*nextMax - old);
+
+    if(result.done){
+      episodes++;
+      resetAgent(a);
+    }
+  });
+
+  // decay randomness
+  epsilon *= 0.9995;
+  if(epsilon < 0.05) epsilon = 0.05;
+}
+
+// ============================
 // RENDER LOOP
+// ============================
 function animate(){
   requestAnimationFrame(animate);
+
   updateRL();
-  agents.forEach(a=>{a.mesh.position.set(a.x,0.3,a.z); a.mesh.rotation.y=-a.angle;});
+
+  agents.forEach(a=>{
+    a.mesh.position.set(a.x,0.3,a.z);
+    a.mesh.rotation.y = -a.angle;
+  });
+
   camera.lookAt(0,0,0);
+
   document.getElementById("stats").innerHTML =
-    `Agents: ${AGENT_COUNT}<br>Episodes: ${episodes}<br>Epsilon: ${epsilon.toFixed(2)}`;
+    "Agents: " + AGENT_COUNT + "<br>" +
+    "Episodes: " + episodes + "<br>" +
+    "Epsilon: " + epsilon.toFixed(2);
+
   renderer.render(scene,camera);
 }
 animate();
 
 window.addEventListener("resize",()=>{
-  camera.aspect=innerWidth/innerHeight;
+  camera.aspect = innerWidth/innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);
 });
 </script>
+
 </body>
 </html>
