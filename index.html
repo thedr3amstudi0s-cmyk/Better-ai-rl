@@ -3,75 +3,70 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-
-<title>Mobile RL AI</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D RL AI (Stable)</title>
 
 <style>
-  body {
-    margin:0;
-    background:#000;
-    color:white;
-    font-family:Arial;
-    overflow:hidden;
-    touch-action:none;
-  }
+body { margin:0; background:#000; color:white; font-family:Arial; overflow:hidden; }
 
-  #ui {
-    position:fixed;
-    top:10px;
-    left:10px;
-    right:10px;
-    background:rgba(0,0,0,0.7);
-    padding:12px;
-    border-radius:10px;
-    font-size:14px;
-  }
+#ui {
+  position:fixed;
+  top:10px;
+  left:10px;
+  right:10px;
+  background:rgba(0,0,0,0.7);
+  padding:10px;
+  border-radius:10px;
+}
 
-  #stats, #brain {
-    margin-top:6px;
-  }
+#stats { margin-top:6px; }
 
-  canvas#graph {
-    width:100%;
-    height:80px;
-    margin-top:8px;
-    background:#111;
-    border-radius:6px;
-  }
+#bars {
+  display:flex;
+  gap:4px;
+  margin-top:6px;
+}
+.bar {
+  flex:1;
+  background:#333;
+  height:40px;
+  position:relative;
+}
+.bar div {
+  position:absolute;
+  bottom:0;
+  width:100%;
+  background:lime;
+}
 
-  #controls {
-    margin-top:8px;
-    display:flex;
-    gap:6px;
-  }
+canvas#graph {
+  width:100%;
+  height:80px;
+  margin-top:6px;
+  background:#111;
+}
 
-  button {
-    flex:1;
-    padding:10px;
-    font-size:14px;
-    border:none;
-    border-radius:6px;
-    background:#333;
-    color:white;
-  }
-
-  button:active {
-    background:#555;
-  }
+button {
+  padding:8px;
+  margin-right:5px;
+}
 </style>
 
 </head>
+
 <body>
 
 <div id="ui">
-  <div id="controls">
-    <button onclick="toggleTraining()">Start/Stop</button>
-    <button onclick="resetAll()">Reset</button>
-  </div>
+  <button onclick="toggleTraining()">Start/Stop</button>
+  <button onclick="resetAll()">Reset</button>
 
   <div id="stats"></div>
-  <div id="brain"></div>
+
+  <div id="bars">
+    <div class="bar"><div id="b0"></div></div>
+    <div class="bar"><div id="b1"></div></div>
+    <div class="bar"><div id="b2"></div></div>
+  </div>
 
 <canvas id="graph"></canvas>
 
@@ -81,12 +76,7 @@
 
 <script>
 // ============================
-// MOBILE DETECTION
-// ============================
-const isMobile = /Mobi|Android/i.test(navigator.userAgent);
-
-// ============================
-// CANVAS
+// SETUP
 // ============================
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -99,15 +89,14 @@ resize();
 window.addEventListener("resize", resize);
 
 // ============================
-// WORLD
+// WORLD (3D simulated)
 // ============================
-const SIZE = Math.min(window.innerWidth, window.innerHeight);
-const AGENT_COUNT = isMobile ? 12 : 25;
+const SIZE = 400;
+const DEPTH = 200; // fake height
 
-let goal = {
-  x: Math.random()*SIZE,
-  y: Math.random()*SIZE
-};
+const AGENT_COUNT = 20;
+
+let goal = { x:200, y:200 };
 
 // ============================
 // AGENTS
@@ -116,16 +105,16 @@ const agents = [];
 
 function createAgent(){
   return {
-    x: SIZE/2,
-    y: SIZE/2,
-    angle: Math.random()*Math.PI*2,
-    speed: isMobile ? 1.6 : 2
+    x:200,
+    y:200,
+    z:0,
+    vy:0,
+    angle:Math.random()*Math.PI*2,
+    speed:2
   };
 }
 
-for(let i=0;i<AGENT_COUNT;i++){
-  agents.push(createAgent());
-}
+for(let i=0;i<AGENT_COUNT;i++) agents.push(createAgent());
 
 // ============================
 // RL
@@ -136,66 +125,78 @@ const actions = ["forward","left","right"];
 let alpha=0.12, gamma=0.9, epsilon=0.3;
 let training = true;
 
-function toggleTraining(){
-  training = !training;
+function toggleTraining(){ training=!training; }
+
+function resetAgent(a){
+  a.x=200; a.y=200; a.z=0; a.vy=0;
 }
 
 function resetAll(){
-  agents.forEach(a=>{
-    a.x = SIZE/2;
-    a.y = SIZE/2;
-  });
-  goal.x = Math.random()*SIZE;
-  goal.y = Math.random()*SIZE;
+  agents.forEach(resetAgent);
+  goal.x=Math.random()*SIZE;
+  goal.y=Math.random()*SIZE;
 }
 
+// ============================
+// STATE
+// ============================
 function getState(a){
-  let dx = goal.x - a.x;
-  let dy = goal.y - a.y;
+  let dx=goal.x-a.x;
+  let dy=goal.y-a.y;
+  let dist=Math.hypot(dx,dy);
+  let diff=Math.atan2(dy,dx)-a.angle;
 
-  let dist = Math.hypot(dx,dy);
-  let diff = Math.atan2(dy,dx) - a.angle;
+  let lookX=a.x+Math.cos(a.angle)*20;
+  let lookY=a.y+Math.sin(a.angle)*20;
 
-  let lookX = a.x + Math.cos(a.angle)*20;
-  let lookY = a.y + Math.sin(a.angle)*20;
-
-  let danger = (lookX<0||lookX>SIZE||lookY<0||lookY>SIZE)?1:0;
+  let danger=(lookX<0||lookX>SIZE||lookY<0||lookY>SIZE)?1:0;
 
   return `${Math.round(dist/20)}_${Math.round(diff*4)}_${danger}`;
 }
 
 function chooseAction(state){
   if(Math.random()<epsilon) return actions[Math.floor(Math.random()*3)];
-  let qs = Q[state]||{};
+  let qs=Q[state]||{};
   return actions.reduce((a,b)=>(qs[a]||0)>(qs[b]||0)?a:b);
 }
 
+// ============================
+// STEP
+// ============================
 function step(a,action){
-  let prevDist = Math.hypot(goal.x-a.x, goal.y-a.y);
+  let prevDist=Math.hypot(goal.x-a.x,goal.y-a.y);
 
-  if(action==="left") a.angle -= 0.2;
-  if(action==="right") a.angle += 0.2;
+  if(action==="left") a.angle-=0.2;
+  if(action==="right") a.angle+=0.2;
 
   if(action==="forward"){
-    a.x += Math.cos(a.angle)*a.speed;
-    a.y += Math.sin(a.angle)*a.speed;
+    a.x+=Math.cos(a.angle)*a.speed;
+    a.y+=Math.sin(a.angle)*a.speed;
   }
 
-  let newDist = Math.hypot(goal.x-a.x, goal.y-a.y);
+  let newDist=Math.hypot(goal.x-a.x,goal.y-a.y);
 
-  let reward = (prevDist - newDist)*2;
+  let reward=(prevDist-newDist)*3;
 
-  let diff = Math.abs(Math.atan2(goal.y-a.y, goal.x-a.x) - a.angle);
-  reward += (Math.PI - diff);
+  let diff=Math.abs(Math.atan2(goal.y-a.y,goal.x-a.x)-a.angle);
+  reward+=(Math.PI-diff);
 
-  if(a.x<10||a.x>SIZE-10||a.y<10||a.y>SIZE-10) reward -= 2;
+  // edge warning
+  if(a.x<10||a.x>SIZE-10||a.y<10||a.y>SIZE-10) reward-=3;
 
+  // FALL OFF EDGE → 3D fall
   if(a.x<0||a.x>SIZE||a.y<0||a.y>SIZE){
-    return {reward:-30, done:true};
+    a.vy += 0.5;
+    a.z += a.vy;
+
+    if(a.z > DEPTH){
+      return {reward:-50, done:true};
+    }
+    return {reward:-5, done:false};
   }
 
-  if(newDist < 10){
-    return {reward:40, done:true};
+  if(newDist<10){
+    return {reward:50, done:true};
   }
 
   return {reward, done:false};
@@ -204,97 +205,136 @@ function step(a,action){
 // ============================
 // GRAPH
 // ============================
-const graph = document.getElementById("graph");
-const gctx = graph.getContext("2d");
+const graph=document.getElementById("graph");
+const gctx=graph.getContext("2d");
 
 function resizeGraph(){
-  graph.width = graph.clientWidth;
-  graph.height = graph.clientHeight;
+  graph.width=graph.clientWidth;
+  graph.height=graph.clientHeight;
 }
 resizeGraph();
-window.addEventListener("resize", resizeGraph);
+window.addEventListener("resize",resizeGraph);
 
-let rewards = [];
+let rewards=[];
+let avgRewards=[];
 
 function drawGraph(){
   gctx.clearRect(0,0,graph.width,graph.height);
 
+  // instant reward (spiky)
   gctx.beginPath();
   for(let i=0;i<rewards.length;i++){
-    let x = i;
-    let y = graph.height - rewards[i];
-    if(i===0) gctx.moveTo(x,y);
-    else gctx.lineTo(x,y);
+    let y=graph.height-rewards[i];
+    if(i===0) gctx.moveTo(i,y);
+    else gctx.lineTo(i,y);
   }
   gctx.strokeStyle="lime";
+  gctx.stroke();
+
+  // avg reward (smooth)
+  gctx.beginPath();
+  for(let i=0;i<avgRewards.length;i++){
+    let y=graph.height-avgRewards[i];
+    if(i===0) gctx.moveTo(i,y);
+    else gctx.lineTo(i,y);
+  }
+  gctx.strokeStyle="cyan";
   gctx.stroke();
 }
 
 // ============================
 // LOOP
 // ============================
-let episodes = 0;
-let lastDebug = {};
+let episodes=0;
+let lastQ={};
 
 function update(){
   if(!training) return;
 
-  agents.forEach(a=>{
-    let s = getState(a);
-    let act = chooseAction(s);
+  let totalReward=0;
 
-    let res = step(a,act);
-    let s2 = getState(a);
+  agents.forEach(a=>{
+    let s=getState(a);
+    let act=chooseAction(s);
+
+    let res=step(a,act);
+    let s2=getState(a);
 
     if(!Q[s]) Q[s]={};
 
-    let old = Q[s][act]||0;
-    let nextMax = Q[s2]?Math.max(...actions.map(x=>Q[s2][x]||0)):0;
+    let old=Q[s][act]||0;
+    let nextMax=Q[s2]?Math.max(...actions.map(x=>Q[s2][x]||0)):0;
 
-    Q[s][act] = old + alpha*(res.reward + gamma*nextMax - old);
+    Q[s][act]=old+alpha*(res.reward+gamma*nextMax-old);
 
-    lastDebug = {state:s, action:act, q:Q[s]};
+    lastQ=Q[s];
 
-    rewards.push(res.reward);
-    if(rewards.length>graph.width) rewards.shift();
+    totalReward+=res.reward;
 
     if(res.done){
       episodes++;
-      a.x = SIZE/2;
-      a.y = SIZE/2;
+      resetAgent(a);
     }
   });
 
+  let avg=totalReward/AGENT_COUNT;
+
+  rewards.push(avg);
+  if(rewards.length>graph.width) rewards.shift();
+
+  avgRewards.push(
+    avgRewards.length>0 ? avgRewards[avgRewards.length-1]*0.9 + avg*0.1 : avg
+  );
+  if(avgRewards.length>graph.width) avgRewards.shift();
+
   epsilon*=0.999;
-  if(epsilon<0.05) epsilon=0.05;
 }
 
+// ============================
+// DRAW
+// ============================
 function draw(){
   ctx.fillStyle="#111";
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
+  // platform
+  ctx.strokeStyle="#444";
+  ctx.strokeRect(0,0,SIZE,SIZE);
+
   // goal
   ctx.fillStyle="lime";
-  ctx.fillRect(goal.x,goal.y,12,12);
+  ctx.fillRect(goal.x,goal.y,10,10);
 
   // agents
-  ctx.fillStyle="cyan";
   agents.forEach(a=>{
+    ctx.fillStyle = a.z>0 ? "red" : "cyan";
     ctx.fillRect(a.x,a.y,6,6);
   });
 }
 
+// ============================
+// UI
+// ============================
+function updateUI(){
+  document.getElementById("stats").innerHTML =
+    `Agents: ${AGENT_COUNT} | Episodes: ${episodes}`;
+
+  let vals = ["forward","left","right"].map(a=>lastQ[a]||0);
+  let max = Math.max(...vals,1);
+
+  vals.forEach((v,i)=>{
+    document.getElementById("b"+i).style.height = (v/max*40)+"px";
+  });
+}
+
+// ============================
+// MAIN LOOP
+// ============================
 function loop(){
   update();
   draw();
   drawGraph();
-
-  document.getElementById("stats").innerHTML =
-    `Agents: ${AGENT_COUNT}<br>Episodes: ${episodes}<br>Epsilon: ${epsilon.toFixed(2)}`;
-
-  document.getElementById("brain").innerHTML =
-    `Action: ${lastDebug.action || ""}`;
-
+  updateUI();
   requestAnimationFrame(loop);
 }
 loop();
